@@ -1,5 +1,7 @@
 # Codex Skin for Hermes Desktop
 
+**Have an idea, a bug report or an improvement? Please open an [issue](https://github.com/FPSUnleashed/hermes-codex-skin/issues) or a [pull request](https://github.com/FPSUnleashed/hermes-codex-skin/pulls).** If you've improved your own fork, I'd love for you to share it here so everyone can benefit. I'm happy to review contributions and include those that fit the project, with credit to you.
+
 <p>
   <a href="docs/images/skin-cream.jpg"><img src="docs/images/skin-cream.jpg" width="360" alt="Codex Skin with a cream theme and status bar"></a>
   <a href="docs/images/skin-dark.jpg"><img src="docs/images/skin-dark.jpg" width="360" alt="Codex Skin with a dark blue theme"></a>
@@ -68,6 +70,7 @@ Open the command palette and search for **Codex Skin:**. Choices persist locally
 | Pinned user messages | Hermes / Off | Hermes |
 | Clean transcript | On / Off | Off |
 | Inbox | On / Off | On |
+| Floating sidebar (unreleased) | On / Off | On |
 
 
 Enable or disable the skin under **Capabilities → Plugins**. Under **Settings → Appearance**, choose **Codex Skin** for the original Codex palette, or keep your native Hermes theme. Installing the plugin does not select its theme.
