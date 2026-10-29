@@ -5436,7 +5436,14 @@ function isCodexInboxSessionNotFound(error) {
   // Electron invoke drops statusCode. Read only the native HTTP prefix,
   // never a status mentioned inside an auth, transport or corrupt-body error.
   const nativeStatus = /^Error invoking remote method 'hermes:api': Error: (\d{3}): /.exec(error?.message || '')
-  return nativeStatus?.[1] === '404'
+  if (nativeStatus) return nativeStatus[1] === '404'
+  // Hermes Desktop answers an EXPECTED 404 through the `__hermesExpected404__`
+  // sentinel (electron/api-expected-404.ts): the main process resolves with it
+  // and the preload rethrows the status text as a bare `<status>: <body>` error,
+  // with neither the invoke prefix nor a status field. Accept that complete
+  // shape only, so a body that merely mentions a status stays rejected.
+  const expectedNotFound = /^(\d{3}): \{[^\n]*\}$/.exec(error?.message || '')
+  return expectedNotFound?.[1] === '404'
 }
 
 async function codexInboxUnchangedOpenOwner(sessionId, scope, stillCurrent) {
