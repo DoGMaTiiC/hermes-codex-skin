@@ -52,7 +52,13 @@ function isCodexInboxSessionNotFound(error) {
   // with neither the invoke prefix nor a status field. Accept that complete
   // shape only, so a body that merely mentions a status stays rejected.
   const expectedNotFound = /^(\d{3}): \{[^\n]*\}$/.exec(error?.message || '')
-  return expectedNotFound?.[1] === '404'
+  if (expectedNotFound?.[1] !== '404') return false
+  try {
+    JSON.parse(expectedNotFound[0].slice(5))
+    return true
+  } catch {
+    return false
+  }
 }
 
 async function codexInboxUnchangedOpenOwner(sessionId, scope, stillCurrent) {

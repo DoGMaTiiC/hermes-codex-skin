@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-- Treat Hermes Desktop's expected-404 sentinel as an absent session: an expected 404 arrives as a bare `<status>: <body>` error, which the Inbox rejected, so one deleted thread made the whole Inbox unloadable.
+- Treat Hermes Desktop's expected-404 sentinel as an absent session: an expected 404 arrives as a bare `<status>: <body>` error, which the Inbox rejected, so one deleted thread made the whole Inbox unloadable. Contributed by [@DoGMaTiiC](https://github.com/DoGMaTiiC) in [#39](https://github.com/FPSUnleashed/hermes-codex-skin/pull/39), with additional JSON-body validation and malformed-response regression coverage.
 
 ### Added
 

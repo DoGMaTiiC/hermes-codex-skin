@@ -101,7 +101,8 @@ test('native HTTP absence matrix agrees for unchanged-open ownership and both re
     scenarios.push({ label: `expected-404-sentinel ${message}`, error: new Error(message), positive: true },
       { label: `serialized-expected-404-sentinel ${message}`, error: serialize(new Error(message)), positive: true })
   }
-  for (const message of ['404:not json', '404: {"detail":"x"', '500: {"detail":"boom"}', '404: {} trailing']) {
+  for (const message of ['404:not json', '404: {"detail":"x"', '500: {"detail":"boom"}', '404: {} trailing',
+    '404: {not json}', '404: {"detail":}', '404: {"detail":"x",}', '404: {} {}', '404: []', '404: null']) {
     scenarios.push({ label: message, error: new Error(message), positive: false })
   }
   scenarios.push({ label: 'string-status-not-native', error: Object.assign(serialize(native.httpStatusError(404, 'missing')), { statusCode: '404' }), positive: false })
