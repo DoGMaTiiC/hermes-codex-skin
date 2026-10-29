@@ -92,6 +92,19 @@ test('native HTTP absence matrix agrees for unchanged-open ownership and both re
     "Error invoking remote method 'hermes:api': Error: 4040: not status 404",
     "Error invoking remote method 'hermes:api': Error: 404:not the exact prefix"
   ]) scenarios.push({ label: message, error: new Error(message), positive: false })
+  // Hermes Desktop answers an EXPECTED 404 by resolving with the
+  // `__hermesExpected404__` sentinel; the preload rethrows its status text as a
+  // bare `<status>: <json body>` error, without Electron's invoke prefix and
+  // without a status field. Only that complete shape may count as an absent
+  // session — a message that merely mentions a status still must not.
+  for (const message of ['404: {"detail":"Session not found"}', '404: {}']) {
+    scenarios.push({ label: `expected-404-sentinel ${message}`, error: new Error(message), positive: true },
+      { label: `serialized-expected-404-sentinel ${message}`, error: serialize(new Error(message)), positive: true })
+  }
+  for (const message of ['404:not json', '404: {"detail":"x"', '500: {"detail":"boom"}', '404: {} trailing',
+    '404: {not json}', '404: {"detail":}', '404: {"detail":"x",}', '404: {} {}', '404: []', '404: null']) {
+    scenarios.push({ label: message, error: new Error(message), positive: false })
+  }
   scenarios.push({ label: 'string-status-not-native', error: Object.assign(serialize(native.httpStatusError(404, 'missing')), { statusCode: '404' }), positive: false })
   for (const { label, error, positive } of scenarios) {
     const f = await fixture({ error })
