@@ -703,6 +703,16 @@ function startCodexInboxObserver(ctx, inbox, context = {}) {
   }
   const stopQuery = observer.subscribe(project)
   inbox.reproject = project
+  // Local fork: a session created a moment ago has no metadata row yet, so its
+  // first events resolve to nothing and the thread only appeared on the next
+  // 10s poll. An unresolvable in-scope event now hints a bounded refetch.
+  let refreshHintAt = 0
+  const hintRefresh = () => {
+    const now = Date.now()
+    if (disposed || mode !== 'on' || now - refreshHintAt < 2000) return
+    refreshHintAt = now
+    void Promise.resolve(observer.refetch()).catch(() => {})
+  }
   const resolveLiveEvent = event => {
     const query = observer.getCurrentResult(), data = progressSnapshot || query.data
     if (disposed || mode !== 'on' || event.replayed || !event.session_id || query.error ||
@@ -710,7 +720,7 @@ function startCodexInboxObserver(ctx, inbox, context = {}) {
         !liveConnected(scope) || !sameInboxScope(scope, inboxOwnerScope()) || data?._codexInboxLiveAuthority !== liveAuthority) return null
     const metadata = metadataPreview?.sessions || data.sessions
     const canonicalId = codexInboxCanonicalRuntime(scope, data.targetProfile, event.session_id, data.rawLiveSessions, metadata, liveOwners)
-    if (!canonicalId) return null
+    if (!canonicalId) { hintRefresh(); return null }
     const matches = metadata.filter(session => (session._lineage_root_id || session.id) === canonicalId)
     return matches.length ? { ...event, session_id: matches[0].id } : null
   }

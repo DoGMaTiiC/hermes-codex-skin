@@ -6755,6 +6755,16 @@ function startCodexInboxObserver(ctx, inbox, context = {}) {
   }
   const stopQuery = observer.subscribe(project)
   inbox.reproject = project
+  // Local fork: a session created a moment ago has no metadata row yet, so its
+  // first events resolve to nothing and the thread only appeared on the next
+  // 10s poll. An unresolvable in-scope event now hints a bounded refetch.
+  let refreshHintAt = 0
+  const hintRefresh = () => {
+    const now = Date.now()
+    if (disposed || mode !== 'on' || now - refreshHintAt < 2000) return
+    refreshHintAt = now
+    void Promise.resolve(observer.refetch()).catch(() => {})
+  }
   const resolveLiveEvent = event => {
     const query = observer.getCurrentResult(), data = progressSnapshot || query.data
     if (disposed || mode !== 'on' || event.replayed || !event.session_id || query.error ||
@@ -6762,7 +6772,7 @@ function startCodexInboxObserver(ctx, inbox, context = {}) {
         !liveConnected(scope) || !sameInboxScope(scope, inboxOwnerScope()) || data?._codexInboxLiveAuthority !== liveAuthority) return null
     const metadata = metadataPreview?.sessions || data.sessions
     const canonicalId = codexInboxCanonicalRuntime(scope, data.targetProfile, event.session_id, data.rawLiveSessions, metadata, liveOwners)
-    if (!canonicalId) return null
+    if (!canonicalId) { hintRefresh(); return null }
     const matches = metadata.filter(session => (session._lineage_root_id || session.id) === canonicalId)
     return matches.length ? { ...event, session_id: matches[0].id } : null
   }
@@ -8406,7 +8416,10 @@ function installCodexInboxRuntime({ storage, host, document: doc = document, win
   admission = createCodexInboxAdmission(storage, model);
   let on = false;
   try { on = storage?.get?.('inbox', 'on') !== 'off'; } catch { /* Fail closed until the parent supplies a mode. */ }
-  let workingShelfOpen = false;
+  // Local fork: a thread you just answered is "working", and a collapsed shelf
+  // hides it until the turn ends — the conversation appears to vanish. Keep the
+  // shelf open so the active thread stays in place.
+  let workingShelfOpen = true;
   let snoozedShelfOpen = false;
   let disposed = false, raf = null, island = null, style = null, container = null;
   let deadlineTimer = null, armingDeadline = false, snoozePopup = null;
@@ -8839,7 +8852,7 @@ function installCodexInboxRuntime({ storage, host, document: doc = document, win
   };
   const cleanupDOM = () => {
     closeSnoozePopup(false); clearSettleNotices(); rowBindings.clear();
-    workingShelfOpen = false;
+    workingShelfOpen = true;
     snoozedShelfOpen = false;
     island?.remove(); island = null; signature = null; container = null;
     style?.remove(); style = null;
@@ -9033,9 +9046,12 @@ html[data-codex-chat-look='true'] [data-codex-inbox-undo-progress] { display:blo
     const snoozed = sessions.filter(s => withSession(s, () => model.isSnoozed(currentScope, s)));
     const snoozedKeys = new Set(snoozed.map(sessionKey));
     const workStates = new Map(sessions.map(s => [sessionKey(s), withSession(s, () => workState(s))]));
-    const working = sessions.filter(s => !snoozedKeys.has(sessionKey(s)) && workStates.get(sessionKey(s)) === 'working');
-    const workingKeys = new Set(working.map(sessionKey));
-    const shown = sessions.filter(s => !workingKeys.has(sessionKey(s)) && !snoozedKeys.has(sessionKey(s)));
+    // Local fork: a thread in progress keeps its place in the main list. The
+    // Working shelf hid the conversation you just answered (and a session you
+    // just started) until the turn ended, which read as "it disappeared".
+    const working = [];
+    const workingKeys = new Set();
+    const shown = sessions.filter(s => !snoozedKeys.has(sessionKey(s)));
     const nextSignature = JSON.stringify([currentScope, inboxOpen, workingShelfOpen, snoozedShelfOpen, [...snoozedKeys], input.loading, !!input.error, model.error, admission.error, headerTemplate.fingerprint,
       [...settleNotices.values()].map(item => [item.key, item.until]), sessions.length, sessions.map(s => [sessionKey(s), codexInboxId(s), s.title, withSession(s, () => safety(s)), workStates.get(sessionKey(s)), withSession(s, () => active(s)), activityByKey.get(sessionKey(s))?.children.size || 0, s._codexInboxAppearance]), host.state?.connectionId?.get?.(), host.state?.profile?.get?.()]);
     if (signature !== nextSignature) {
