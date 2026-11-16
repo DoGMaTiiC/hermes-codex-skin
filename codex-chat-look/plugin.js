@@ -6987,6 +6987,37 @@ function codexInboxProfileFilter() {
   return wanted.size ? wanted : null
 }
 
+// Local fork: the stock Inbox admits a chat only while it is observed working,
+// so a quiet profile renders as an empty list. Backfill the newest work-bearing
+// chats of each selected profile once per selection, then keep admitting chats
+// touched inside the recent window so a thread opened now shows up on its own.
+const INBOX_SEED_KEY = 'inbox-seed-v2'
+const INBOX_SEED_PER_PROFILE = 20
+const INBOX_SEED_RECENT_WINDOW_S = 48 * 60 * 60
+
+function seedCodexInboxOwner(inbox, scope, snapshot) {
+  try {
+    if (!inbox?.admission?.observe || !scope || !snapshot) return
+    if (!readCodexInboxProfiles()) return
+    const rows = Array.isArray(snapshot.sessions) ? snapshot.sessions : []
+    if (!rows.length) return
+    const stamp = `${JSON.stringify(readCodexInboxProfiles() || [])}|${scope.connectionId}|${scope.profile}`
+    const saved = pluginStorage?.get(INBOX_SEED_KEY, null)
+    const map = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {}
+    const seeded = map[stamp] === true
+    const cutoff = Date.now() / 1000 - INBOX_SEED_RECENT_WINDOW_S
+    const candidates = rows.filter(row => row && codexInboxId(row) && !row.hidden && !row.archived &&
+      Number(row.message_count) > 0 && codexInboxSource(row) === 'noncron')
+    const recent = candidates.filter(row => (Number(row.last_active) || Number(row.started_at) || 0) >= cutoff)
+    const newest = [...candidates]
+      .sort((left, right) => (Number(right.last_active) || 0) - (Number(left.last_active) || 0))
+      .slice(0, INBOX_SEED_PER_PROFILE)
+    const chosen = seeded ? recent.slice(0, INBOX_SEED_PER_PROFILE) : [...new Map([...newest, ...recent].map(row => [codexInboxId(row), row])).values()]
+    if (chosen.length) inbox.admission.observe(scope, chosen, { workingSessions: chosen })
+    if (!seeded) pluginStorage?.set(INBOX_SEED_KEY, { ...map, [stamp]: true })
+  } catch { /* seeding is best-effort; live work still admits */ }
+}
+
 function codexInboxProfileLabel() {
   const list = readCodexInboxProfiles()
   if (!list) return 'Todos'
@@ -7247,6 +7278,7 @@ function startUniversalInboxObserver(ctx, inbox, acquire = codexInboxReadLimiter
         activity: event => item.active && !disposed && owners.get(item.key) === item && inbox.activity({ ...event, scope: { ...item.route, _codexInboxGeneration: item.generation } }),
         update: snapshot => {
           if (disposed || !item.active || owners.get(item.key) !== item) return
+          seedCodexInboxOwner(inbox, item.route, snapshot)
           item.snapshot = snapshot; publish()
         }
       }
@@ -7817,8 +7849,12 @@ function createCodexInboxRowUI({ document: doc, onOpen, onMenu, onSnooze }) {
   const update = (state = {}) => {
     if ('foreignProfile' in state) {
       const appearance = state.profileAppearance;
-      property(profileSlot, 'hidden', !state.foreignProfile || !appearance);
-      if (!profileSlot.hidden) {
+      // Local fork: every non-default profile keeps its letter mark even when it
+      // is the active one, so an aggregated Inbox always says who owns the row.
+      // `default` stays clean unless the row is foreign.
+      const showMark = !!appearance && (state.foreignProfile || appearance.name !== 'default');
+      property(profileSlot, 'hidden', !showMark);
+      if (showMark) {
         property(profileSlot, 'title', String(appearance.label));
         appearanceStyle('color', appearance.name === 'default' ? 'var(--ui-text-quaternary)' : appearance.color || '');
         appearanceStyle('background', appearance.name === 'default' ? 'transparent' : appearance.background || 'color-mix(in srgb,var(--ui-text-quaternary) 22%,transparent)');
@@ -7826,7 +7862,7 @@ function createCodexInboxRowUI({ document: doc, onOpen, onMenu, onSnooze }) {
           if (!profileGlyph.querySelector('.codicon-home')) { const home = make('i', 'codicon codicon-home'); home.setAttribute('aria-hidden', 'true'); profileGlyph.replaceChildren(home); }
         } else if (profileGlyph.textContent !== appearance.letter) profileGlyph.textContent = appearance.letter;
       }
-      if (state.foreignProfile && !profileSlot.isConnected) actions.append(profileSlot);
+      if (showMark && !profileSlot.isConnected) actions.append(profileSlot);
     }
     if ('title' in state) { property(text, 'textContent', String(state.title ?? '')); property(go, 'title', text.textContent); }
     if ('selected' in state) {
@@ -8415,9 +8451,17 @@ function installCodexInboxRuntime({ storage, host, document: doc = document, win
   };
   const withSession = (session, fn, actionable = false) => withinOwner(session?._codexInboxRoute || currentScope, fn, actionable);
   const sessionKey = session => withSession(session, () => model.key(currentScope, session));
-  const projectedSessions = () => ownerSnapshots
-    ? [...ownerSnapshots.values()].flatMap(snapshot => withinOwner(snapshot.scope, () => inboxSessions()))
-    : inboxSessions();
+  const projectedSessions = () => {
+    const rows = ownerSnapshots
+      ? [...ownerSnapshots.values()].flatMap(snapshot => withinOwner(snapshot.scope, () => inboxSessions()))
+      : inboxSessions();
+    // Local fork: one recency-ranked list across every selected profile. The
+    // owner order alone buries the second profile under the first one's history.
+    return rows
+      .map((session, index) => ({ session, index, at: Number(session.last_active) || Number(session.started_at) || 0 }))
+      .sort((left, right) => right.at - left.at || left.index - right.index)
+      .map(item => item.session);
+  };
   const badgeBindings = new Map();
   const settledBadgeBindings = new Map();
   const externalBindings = new Map();

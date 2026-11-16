@@ -46,16 +46,19 @@ fs.writeFileSync(path.join(nodeModules, 'react', 'package.json'), JSON.stringify
 // ---- stubs -------------------------------------------------------------
 let profiles = null;
 let universal;
+const extra = new Map();
 const storage = {
   get(key, fallback = null) {
     if (key === 'inbox-profiles') return profiles;
     if (key === 'inbox') return 'on';
     if (key === 'universal-inbox') return universal === undefined ? fallback : universal;
+    if (extra.has(key)) return extra.get(key);
     return fallback;
   },
   set(key, value) {
     if (key === 'inbox-profiles') { profiles = value; return true; }
     if (key === 'universal-inbox') { universal = value; return true; }
+    extra.set(key, value);
     return true;
   },
 };
@@ -124,7 +127,7 @@ fs.writeFileSync(mjsPath, pluginSrc + '\n' + [
   'if (globalThis.pluginStorage) pluginStorage = globalThis.pluginStorage;',
   'export const __seam = {',
   '  readCodexInboxProfiles, isInboxAllProfiles, codexInboxProfileFilter, codexInboxProfileLabel,',
-  '  setCodexInboxProfiles, readUniversalInboxInventory, readUniversalInbox, BUILD_ID,',
+  '  setCodexInboxProfiles, readUniversalInboxInventory, readUniversalInbox, seedCodexInboxOwner, BUILD_ID,',
   '};',
   '',
 ].join('\n'));
@@ -218,4 +221,38 @@ test('ambiguity is scoped to the selected profiles', async () => {
   assert.equal(narrowed.complete, true);
   routeAnswer = savedRoutes;
   rosterAnswer = savedRoster;
+});
+
+test('seed admits the newest chats once, then only the recent window', () => {
+  profiles = ['mbl'];
+  const route = { connectionId: 'c1', profile: 'mbl', targetProfile: 'mbl', mode: 'local' };
+  const now = Date.now() / 1000;
+  const rows = [
+    { id: 'novo', profile: 'mbl', connection_id: 'c1', source: 'desktop', message_count: 3, last_active: now - 60 },
+    { id: 'antigo', profile: 'mbl', connection_id: 'c1', source: 'desktop', message_count: 5, last_active: now - 86400 * 5 },
+    { id: 'vazio', profile: 'mbl', connection_id: 'c1', source: 'desktop', message_count: 0, last_active: now },
+    { id: 'cron', profile: 'mbl', connection_id: 'c1', source: 'cron', message_count: 4, last_active: now },
+  ];
+  const calls = [];
+  const inbox = { admission: { observe: (scope, chosen, options) => { calls.push({ scope, chosen, options }); return true; } } };
+
+  seam.seedCodexInboxOwner(inbox, route, { sessions: rows });
+  assert.equal(calls.length, 1);
+  // Cron and empty chats never seed; the first pass backfills the newest one.
+  assert.deepEqual(calls[0].chosen.map(row => row.id), ['novo', 'antigo']);
+  assert.deepEqual(calls[0].options.workingSessions.map(row => row.id), ['novo', 'antigo']);
+
+  calls.length = 0;
+  seam.seedCodexInboxOwner(inbox, route, { sessions: rows });
+  assert.equal(calls.length, 1);
+  // Later passes only keep admitting chats touched inside the recent window.
+  assert.deepEqual(calls[0].chosen.map(row => row.id), ['novo']);
+});
+
+test('seed stays out of the way without a stored selection', () => {
+  profiles = null;
+  const calls = [];
+  const inbox = { admission: { observe: () => { calls.push(1); return true; } } };
+  seam.seedCodexInboxOwner(inbox, { connectionId: 'c1', profile: 'mbl' }, { sessions: [{ id: 'x', profile: 'mbl', connection_id: 'c1', source: 'desktop', message_count: 2, last_active: Date.now() / 1000 }] });
+  assert.equal(calls.length, 0);
 });

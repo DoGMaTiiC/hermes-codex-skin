@@ -522,9 +522,17 @@ function installCodexInboxRuntime({ storage, host, document: doc = document, win
   };
   const withSession = (session, fn, actionable = false) => withinOwner(session?._codexInboxRoute || currentScope, fn, actionable);
   const sessionKey = session => withSession(session, () => model.key(currentScope, session));
-  const projectedSessions = () => ownerSnapshots
-    ? [...ownerSnapshots.values()].flatMap(snapshot => withinOwner(snapshot.scope, () => inboxSessions()))
-    : inboxSessions();
+  const projectedSessions = () => {
+    const rows = ownerSnapshots
+      ? [...ownerSnapshots.values()].flatMap(snapshot => withinOwner(snapshot.scope, () => inboxSessions()))
+      : inboxSessions();
+    // Local fork: one recency-ranked list across every selected profile. The
+    // owner order alone buries the second profile under the first one's history.
+    return rows
+      .map((session, index) => ({ session, index, at: Number(session.last_active) || Number(session.started_at) || 0 }))
+      .sort((left, right) => right.at - left.at || left.index - right.index)
+      .map(item => item.session);
+  };
   const badgeBindings = new Map();
   const settledBadgeBindings = new Map();
   const externalBindings = new Map();

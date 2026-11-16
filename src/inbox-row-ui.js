@@ -146,8 +146,12 @@ function createCodexInboxRowUI({ document: doc, onOpen, onMenu, onSnooze }) {
   const update = (state = {}) => {
     if ('foreignProfile' in state) {
       const appearance = state.profileAppearance;
-      property(profileSlot, 'hidden', !state.foreignProfile || !appearance);
-      if (!profileSlot.hidden) {
+      // Local fork: every non-default profile keeps its letter mark even when it
+      // is the active one, so an aggregated Inbox always says who owns the row.
+      // `default` stays clean unless the row is foreign.
+      const showMark = !!appearance && (state.foreignProfile || appearance.name !== 'default');
+      property(profileSlot, 'hidden', !showMark);
+      if (showMark) {
         property(profileSlot, 'title', String(appearance.label));
         appearanceStyle('color', appearance.name === 'default' ? 'var(--ui-text-quaternary)' : appearance.color || '');
         appearanceStyle('background', appearance.name === 'default' ? 'transparent' : appearance.background || 'color-mix(in srgb,var(--ui-text-quaternary) 22%,transparent)');
@@ -155,7 +159,7 @@ function createCodexInboxRowUI({ document: doc, onOpen, onMenu, onSnooze }) {
           if (!profileGlyph.querySelector('.codicon-home')) { const home = make('i', 'codicon codicon-home'); home.setAttribute('aria-hidden', 'true'); profileGlyph.replaceChildren(home); }
         } else if (profileGlyph.textContent !== appearance.letter) profileGlyph.textContent = appearance.letter;
       }
-      if (state.foreignProfile && !profileSlot.isConnected) actions.append(profileSlot);
+      if (showMark && !profileSlot.isConnected) actions.append(profileSlot);
     }
     if ('title' in state) { property(text, 'textContent', String(state.title ?? '')); property(go, 'title', text.textContent); }
     if ('selected' in state) {
