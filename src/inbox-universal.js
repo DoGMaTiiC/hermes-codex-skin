@@ -19,6 +19,161 @@ function setUniversalInbox(value) {
   return next
 }
 
+// Fork local: the profile selection narrows the stock Universal Inbox.
+//   absent / ['*'] -> every profile (upstream behaviour)
+//   ['a', 'b']     -> only those profiles are read, owned and rendered
+// A live event for a hidden profile resolves to no owner, so it is dropped by
+// the existing scope check instead of gaining a new filter of its own.
+const INBOX_PROFILES_KEY = 'inbox-profiles'
+const INBOX_PROFILES_EVENT = `${ID}:inbox-profiles`
+const INBOX_ALL_SCOPES = '*'
+
+function readCodexInboxProfiles() {
+  try {
+    const raw = pluginStorage?.get(INBOX_PROFILES_KEY, null)
+    if (!Array.isArray(raw) || !raw.length) return null
+    const list = [...new Set(raw.filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()))]
+    return list.length ? list : null
+  } catch { return null }
+}
+
+function isInboxAllProfiles(list) {
+  return Array.isArray(list) && list.length === 1 && list[0] === INBOX_ALL_SCOPES
+}
+
+/** Profiles the aggregated Inbox may read, or null when it keeps them all. */
+function codexInboxProfileFilter() {
+  const list = readCodexInboxProfiles()
+  if (!list || isInboxAllProfiles(list)) return null
+  const wanted = new Set(list.filter(profile => profile !== INBOX_ALL_SCOPES))
+  return wanted.size ? wanted : null
+}
+
+function codexInboxProfileLabel() {
+  const list = readCodexInboxProfiles()
+  if (!list) return 'Todos'
+  return isInboxAllProfiles(list) ? 'Todos' : list.join(', ')
+}
+
+function setCodexInboxProfiles(list) {
+  const value = Array.isArray(list) && list.length ? [...new Set(list)] : null
+  try {
+    pluginStorage?.set(INBOX_PROFILES_KEY, value)
+    if (JSON.stringify(pluginStorage?.get(INBOX_PROFILES_KEY, null)) !== JSON.stringify(value)) throw new Error('Inbox profiles were not saved.')
+  } catch {
+    host.notify?.({ kind: 'error', message: 'Could not save the Inbox profiles.' })
+    return readCodexInboxProfiles()
+  }
+  window.dispatchEvent(new CustomEvent(INBOX_PROFILES_EVENT, { detail: readCodexInboxProfiles() }))
+  return readCodexInboxProfiles()
+}
+
+/** Small centered picker: which profiles feed the aggregated Inbox. */
+async function openInboxProfilesPicker() {
+  const doc = globalThis.document
+  if (!doc?.body) return
+  let routes = []
+  try { routes = typeof host.profileRoutes === 'function' ? await host.profileRoutes() : [] } catch { routes = [] }
+  const names = (Array.isArray(routes) ? routes : [])
+    .map(route => route && (route.profile || route.targetProfile))
+    .filter(name => typeof name === 'string' && name && name !== INBOX_ALL_SCOPES && name !== 'all')
+  const current = readCodexInboxProfiles()
+  const available = [...new Set([...names, ...(current || []).filter(name => name !== INBOX_ALL_SCOPES)])].sort()
+  const activeProfile = inboxGatewayScope().profile
+  let allMode = !current || isInboxAllProfiles(current)
+  const selected = new Set(current && !allMode ? current : [])
+
+  const overlay = doc.createElement('div')
+  overlay.setAttribute('data-codex-inbox-profiles', '')
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:10001;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.38);font:13px/1.5 -apple-system,system-ui,sans-serif;'
+  const panel = doc.createElement('div')
+  panel.style.cssText = 'box-sizing:border-box;width:360px;max-height:70vh;overflow:auto;padding:18px 20px 16px;border-radius:14px;border:1px solid var(--ui-stroke-secondary,#e5e5e5);background:var(--codex-color-card,var(--ui-editor-surface-background,#fff));color:var(--ui-text-primary,#171717);box-shadow:0 18px 48px #0000002e;'
+  const title = doc.createElement('div')
+  title.textContent = 'Inbox — perfis agregados'
+  title.style.cssText = 'font-size:13px;font-weight:600;margin-bottom:4px;'
+  const hint = doc.createElement('div')
+  hint.textContent = 'Escolha quais perfis aparecem no Inbox. Settle/Snooze continuam por perfil.'
+  hint.style.cssText = 'font-size:11px;color:var(--ui-text-tertiary,#737373);margin-bottom:12px;'
+  panel.append(title, hint)
+
+  const makeRow = (labelText, checked, onChange, muted) => {
+    const row = doc.createElement('label')
+    row.style.cssText = `display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:8px;cursor:pointer;${muted ? 'opacity:.55;' : ''}`
+    const box = doc.createElement('input')
+    box.type = 'checkbox'
+    box.checked = checked
+    box.style.cssText = 'width:14px;height:14px;accent-color:var(--dt-primary,#0d0d0d);'
+    box.addEventListener('change', () => onChange(box.checked))
+    const text = doc.createElement('span')
+    text.textContent = labelText
+    text.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+    row.append(box, text)
+    row.addEventListener('mouseenter', () => { row.style.background = 'var(--ui-row-hover-background,#f3f3f3)' })
+    row.addEventListener('mouseleave', () => { row.style.background = 'transparent' })
+    return row
+  }
+
+  panel.append(makeRow('Todos os perfis', allMode, checked => {
+    allMode = checked
+    if (checked) selected.clear()
+    else if (!selected.size) selected.add(activeProfile)
+    renderRows()
+  }))
+
+  const list = doc.createElement('div')
+  list.style.cssText = 'margin:6px 0 2px;border-top:1px solid var(--ui-stroke-tertiary,#eee);padding-top:6px;'
+  const renderRows = () => {
+    list.replaceChildren()
+    for (const name of available) {
+      const row = makeRow(name, allMode || selected.has(name), checked => {
+        if (allMode) return
+        if (checked) selected.add(name)
+        else selected.delete(name)
+      }, allMode)
+      row.querySelector('input').disabled = allMode
+      list.append(row)
+    }
+    if (!available.length) {
+      const empty = doc.createElement('div')
+      empty.textContent = 'Nenhum perfil disponível neste dispositivo.'
+      empty.style.cssText = 'font-size:11px;color:var(--ui-text-tertiary,#737373);padding:6px 8px;'
+      list.append(empty)
+    }
+  }
+  renderRows()
+  panel.append(list)
+
+  const footer = doc.createElement('div')
+  footer.style.cssText = 'display:flex;justify-content:flex-end;gap:8px;margin-top:14px;'
+  const button = (labelText, primary) => {
+    const b = doc.createElement('button')
+    b.type = 'button'
+    b.textContent = labelText
+    b.style.cssText = `padding:7px 14px;border-radius:9px;border:1px solid var(--ui-stroke-secondary,#e5e5e5);cursor:pointer;font:inherit;background:transparent;color:inherit;${primary ? 'background:var(--dt-primary,#0d0d0d);color:var(--dt-primary-foreground,#fff);border-color:transparent;' : ''}`
+    return b
+  }
+  const close = () => overlay.remove()
+  const cancel = button('Cancelar')
+  cancel.addEventListener('click', close)
+  const save = button('Salvar', true)
+  save.addEventListener('click', () => {
+    const value = allMode ? [INBOX_ALL_SCOPES] : (selected.size ? [...selected] : null)
+    setCodexInboxProfiles(value)
+    // A selection is inert while the aggregate is off, so choosing profiles
+    // turns the stock Universal Inbox on instead of saving a dead preference.
+    if (value && !readUniversalInbox()) setUniversalInbox(true)
+    close()
+  })
+  footer.append(cancel, save)
+  panel.append(footer)
+  overlay.append(panel)
+  overlay.addEventListener('click', event => { if (event.target === overlay) close() })
+  doc.addEventListener('keydown', function onKey(event) {
+    if (event.key === 'Escape') { close(); doc.removeEventListener('keydown', onKey) }
+  })
+  doc.body.append(overlay)
+}
+
 function inboxProfileAppearance(route, agent) {
   const name = route.profile.trim(), label = agent?.profileMetadata?.display_name?.trim() || route.profile
   let color = typeof profileColor === 'function' ? profileColor(name) : null
@@ -68,9 +223,17 @@ async function readUniversalInboxInventory() {
     const key = JSON.stringify([route?.connectionId, route?.profile])
     routeCounts.set(key, (routeCounts.get(key) || 0) + 1)
   }
+  // Local fork: the profile selection narrows the inventory, so proof is kept
+  // for the selected profiles only. A hidden profile can never make the Inbox
+  // "incomplete" and keep stale rows alive.
+  const permitted = codexInboxProfileFilter()
+  const permittedProfile = profile => !permitted || (typeof profile === 'string' && permitted.has(profile))
+  const usedSources = new Set()
   const available = [], seen = new Set(), backendAliases = new Map()
-  let complete = roster.sources.every(source => source.reachable === true && !source.error && !source.needsSignIn)
+  let complete = true
   for (const route of routes) {
+    if (!permittedProfile(route?.profile)) continue
+    usedSources.add(route?.connectionId)
     if (!route || !['connectionId', 'profile', 'targetProfile'].every(field => typeof route[field] === 'string' && route[field] && route[field] !== '*') || route.profile === 'all' || route.targetProfile === 'all' || !['local', 'remote'].includes(route.mode)) { complete = false; continue }
     const key = JSON.stringify([route.connectionId, route.profile])
     const agents = roster.agents.filter(agent => sameInboxScope(agent, route) && (!agent.targetProfile || agent.targetProfile === route.targetProfile))
@@ -81,7 +244,8 @@ async function readUniversalInboxInventory() {
     backendAliases.set(backendKey, (backendAliases.get(backendKey) || 0) + 1)
     available.push({ key, route: { ...route }, agent: agents[0], backendKey })
   }
-  if (roster.agents.some(agent => !seen.has(JSON.stringify([agent.connectionId, agent.profile])))) complete = false
+  if (roster.sources.some(source => usedSources.has(source.connectionId) && (source.reachable !== true || source.error || source.needsSignIn))) complete = false
+  if (roster.agents.some(agent => permittedProfile(agent.profile) && !seen.has(JSON.stringify([agent.connectionId, agent.profile])))) complete = false
   const verified = available.filter(item => {
     if (backendAliases.get(item.backendKey) === 1) return true
     complete = false; return false
@@ -173,6 +337,10 @@ function startUniversalInboxObserver(ctx, inbox, acquire = codexInboxReadLimiter
   const stopQuery = observer.subscribe(reconcile)
   const storageChanged = event => { if (!event.key || event.key === 'hermes.desktop.profileColors') publish() }
   window.addEventListener('storage', storageChanged)
+  // Local fork: a new profile selection re-reads the inventory, which retires
+  // the owners that fell out of it and starts the ones that joined.
+  const profilesChanged = () => { if (!disposed) void observer.refetch() }
+  window.addEventListener(INBOX_PROFILES_EVENT, profilesChanged)
   const stopGateway = host.state.gateway?.subscribe?.(() => {
     // The selected socket is not the availability of independent HTTP owners.
     // Per-owner observers revoke live proof; metadata remains roster-routed.
@@ -185,6 +353,7 @@ function startUniversalInboxObserver(ctx, inbox, acquire = codexInboxReadLimiter
     if (disposed) return
     disposed = true; stopQuery(); observer.destroy(); stopGateway?.()
     window.removeEventListener('storage', storageChanged)
+    window.removeEventListener(INBOX_PROFILES_EVENT, profilesChanged)
     for (const item of owners.values()) retire(item)
     owners.clear()
     if (inbox.resolveLiveEvent === resolve) delete inbox.resolveLiveEvent
