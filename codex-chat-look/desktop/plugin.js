@@ -5473,13 +5473,24 @@ export default {
     syncInboxOnlyRoot()
     registerCompleteMessages(ctx, PALETTE_AREA, host, codexSkinFeatureUsed)
     const updater = createSkinUpdater(ctx.storage)
-    const inbox = globalThis.document?.body ? installCodexInboxRuntime({ storage: ctx.storage, host, onFeatureUsed: codexSkinFeatureUsed, onFeatureFailed: codexSkinFeatureFailed }) : null
-    startCodexInboxService(ctx, inbox)
-    startCodexInboxMenuOpenObserver(ctx, inbox)
+    // A standalone Inbox plugin owns the surface while it is loaded; two copies
+    // would fight over the same sidebar node.
+    const inboxElsewhere = !!globalThis.__hermesCodexInboxOwner
+    const inbox = globalThis.document?.body && !inboxElsewhere ? installCodexInboxRuntime({ storage: ctx.storage, host, onFeatureUsed: codexSkinFeatureUsed, onFeatureFailed: codexSkinFeatureFailed }) : null
+    const stopInboxService = startCodexInboxService(ctx, inbox)
+    const stopInboxMenu = startCodexInboxMenuOpenObserver(ctx, inbox)
+    const stopInboxEvents = connectCodexInboxEvents(inbox)
+    // Published so a standalone Inbox plugin can hand the surface over in
+    // either load order: whoever runs second retires the first copy.
+    const inboxHandoff = () => {
+      try { stopInboxEvents?.(); stopInboxMenu?.(); stopInboxService?.(); inbox?.dispose?.() } catch { /* best-effort */ }
+    }
+    if (inbox) globalThis.__hermesCodexInboxHandoff = inboxHandoff
+    ctx.onDispose(() => { if (globalThis.__hermesCodexInboxHandoff === inboxHandoff) delete globalThis.__hermesCodexInboxHandoff })
     // The controller belongs to the plugin, not to a route-mounted UI slot.
     ctx.onDispose(() => updater.dispose())
     ctx.onDispose(() => inbox?.dispose())
-    ctx.onDispose(connectCodexInboxEvents(inbox))
+
     let uninstallStyle
     let disposed = false
     ctx.onDispose(() => {
@@ -5493,8 +5504,10 @@ export default {
     })
     ctx.register({ id: 'update-runtime', area: 'composer.leading', order: 19, render: () => jsx(CodexUpdateRuntime, { updater }) })
     ctx.register({ id: 'update-button', area: 'composer.leading', order: 20, render: () => jsx(CodexUpdateButton, { updater }) })
-    ctx.register({ id: 'inbox-settled-badge', area: 'sessionRow.trailing', data: { render: ({ sessionId }) => jsx(CodexSettledBadge, { sessionId, inbox }) } })
-    ctx.register({ id: 'inbox-open-intent', area: 'sessionRow.leading', data: { render: ({ sessionId }) => jsx(CodexInboxNativeOpenIntent, { sessionId, inbox }) } })
+    if (!inboxElsewhere) {
+      ctx.register({ id: 'inbox-settled-badge', area: 'sessionRow.trailing', data: { render: ({ sessionId }) => jsx(CodexSettledBadge, { sessionId, inbox }) } })
+      ctx.register({ id: 'inbox-open-intent', area: 'sessionRow.leading', data: { render: ({ sessionId }) => jsx(CodexInboxNativeOpenIntent, { sessionId, inbox }) } })
+    }
 
     ctx.register({ id: 'theme', area: THEMES_AREA, data: CODEX_THEME })
     registerT3Themes(ctx, THEMES_AREA)
@@ -5554,6 +5567,7 @@ export default {
         }
       }
     })
+    if (!inboxElsewhere) {
     ctx.register({
       id: 'toggle-universal-inbox',
       area: PALETTE_AREA,
@@ -5593,6 +5607,7 @@ export default {
         run: () => { const next = readCodexInboxMode() === 'on' ? 'off' : 'on'; return codexSkinSettingAction('inbox', INBOX_MODE_KEY, next, () => setCodexInboxMode(next, inbox)) }
       }
     })
+    }
   }
 }
 
