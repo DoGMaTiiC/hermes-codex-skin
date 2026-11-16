@@ -6938,7 +6938,9 @@ function connectCodexInboxEvents(inbox) {
 const UNIVERSAL_INBOX_KEY = 'universal-inbox'
 const UNIVERSAL_INBOX_EVENT = `${ID}:universal-inbox`
 function readUniversalInbox() {
-  try { return pluginStorage?.get(UNIVERSAL_INBOX_KEY, false) === true }
+  // Local fork: a stored profile selection implies the aggregate it narrows, so
+  // a selection keeps working even though the setting itself was never written.
+  try { return pluginStorage?.get(UNIVERSAL_INBOX_KEY, readCodexInboxProfiles() !== null) === true }
   catch { return false }
 }
 function setUniversalInbox(value) {

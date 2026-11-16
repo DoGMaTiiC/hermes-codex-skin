@@ -45,16 +45,17 @@ fs.writeFileSync(path.join(nodeModules, 'react', 'package.json'), JSON.stringify
 
 // ---- stubs -------------------------------------------------------------
 let profiles = null;
+let universal;
 const storage = {
   get(key, fallback = null) {
     if (key === 'inbox-profiles') return profiles;
     if (key === 'inbox') return 'on';
-    if (key === 'universal-inbox') return true;
+    if (key === 'universal-inbox') return universal === undefined ? fallback : universal;
     return fallback;
   },
   set(key, value) {
     if (key === 'inbox-profiles') { profiles = value; return true; }
-    if (key === 'universal-inbox') { return true; }
+    if (key === 'universal-inbox') { universal = value; return true; }
     return true;
   },
 };
@@ -156,6 +157,18 @@ test('explicit selection becomes a filter set', () => {
   assert.deepEqual(seam.readCodexInboxProfiles(), ['default', 'mbl']);
   assert.deepEqual([...seam.codexInboxProfileFilter()], ['default', 'mbl']);
   assert.equal(seam.codexInboxProfileLabel(), 'default, mbl');
+});
+
+test('a stored selection turns the aggregate on by default', () => {
+  universal = undefined;
+  profiles = null;
+  assert.equal(seam.readUniversalInbox(), false);
+  profiles = ['mbl'];
+  assert.equal(seam.readUniversalInbox(), true);
+  universal = false;
+  assert.equal(seam.readUniversalInbox(), false);
+  universal = undefined;
+  profiles = null;
 });
 
 test('saving normalises and persists the selection', () => {
